@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Champ de flux — Les savoirs</title>
+<style>
+  :root {
+    --bg:     #ffffff;
+    --bg2:    #f5f4f0;
+    --text:   #2c2c2a;
+    --text2:  #5f5e5a;
+    --border: #d3d1c7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:    #1a1a18;
+      --bg2:   #242422;
+      --text:  #e2e0d6;
+      --text2: #9c9a92;
+      --border:#444441;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); font-family: system-ui, -apple-system, sans-serif; padding: 24px; }
+  h1 { font-size: 15px; font-weight: 500; color: var(--text); margin-bottom: 4px; }
+  .subtitle { font-size: 12px; color: var(--text2); margin-bottom: 16px; }
+
+  #flux-wrap { position: relative; width: 100%; }
+  svg { display: block; width: 100%; height: auto; overflow: visible; }
+
+  /* Node rings */
+  .ring-outer  { opacity: 0.3; }
+  .ring-mid    { opacity: 0.4; }
+  .ring-stroke { fill: none; opacity: 0.65; stroke-width: 0.8; }
+  .ring-inner-stroke { fill: none; opacity: 0.22; stroke-width: 0.5; }
+  .node-group  { cursor: default; }
+  .node-group:hover .ring-stroke  { opacity: 1; stroke-width: 1.6; }
+  .node-group:hover .ring-outer   { opacity: 0.12; }
+  .node-group:hover .halo         { opacity: 1; }
+  .halo { opacity: 0; }
+
+  /* Edges */
+  .edge-path { fill: none; stroke-linecap: round; stroke-dasharray: 6 5; opacity: 0.2; transition: opacity .15s, stroke-width .15s; }
+  .edge-arrow { opacity: 0.2; transition: opacity .15s; }
+  .edge-label-bg { opacity: 0; transition: opacity .15s; }
+  .edge-label-text { opacity: 0; font-size: 11px; font-weight: 500; transition: opacity .15s; }
+
+  .edge-group:hover .edge-path  { opacity: 0.85; stroke-width: 1.8; }
+  .edge-group:hover .edge-arrow { opacity: 0.85; }
+  .edge-group:hover .edge-label-bg   { opacity: 1; }
+  .edge-group:hover .edge-label-text { opacity: 1; }
+
+  .node-group.active .edge-path-ref  { opacity: 0.85; }
+
+  /* Particles */
+  .particle { pointer-events: none; }
+
+  /* Tooltip */
+  #tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 12px;
+    color: var(--text2);
+    max-width: 240px;
+    line-height: 1.65;
+    display: none;
+    z-index: 10;
+  }
+  #tooltip strong { font-size: 13px; font-weight: 500; color: var(--text); display: block; margin-bottom: 5px; }
+  .edge-line { display: flex; align-items: flex-start; gap: 6px; margin-top: 2px; }
+  .arrow-tag { opacity: 0.5; flex-shrink: 0; margin-top: 1px; }
+
+  #edge-info {
+    min-height: 34px; font-size: 12px; color: var(--text2);
+    margin-top: 10px; padding: 9px 16px;
+    background: var(--bg2); border-radius: 8px;
+    display: flex; align-items: center; gap: 8px;
+    opacity: 0; transition: opacity .2s;
+  }
+  #edge-info.visible { opacity: 1; }
+  .ei-label { font-weight: 500; color: var(--text); }
+
+  #legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+  .leg-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text2); }
+  .leg-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<h1>Champ de flux — les savoirs</h1>
+<p class="subtitle">Survole un nœud pour voir ses connexions · Survole une flèche pour lire son influence</p>
+
+<div id="flux-wrap">
+  <svg id="flux-svg" viewBox="0 0 700 540" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="arr-purple" markerWidth="8" markerHeight="8" refX="7" refY="3.5" orient="auto">
+        <polygon points="0 0, 8 3.5, 0 7" fill="#7F77DD"/>
+      </marker>
+      <marker id="arr-teal" markerWidth="8" markerHeight="8" refX="7" refY="3.5" orient="auto">
+        <polygon points="0 0, 8 3.5, 0 7" fill="#1D9E75"/>
+      </marker>
+      <marker id="arr-coral" markerWidth="8" markerHeight="8" refX="7" refY="3.5" orient="auto">
+        <polygon points="0 0, 8 3.5, 0 7" fill="#D85A30"/>
+      </marker>
+      <marker id="arr-amber" markerWidth="8" markerHeight="8" refX="7" refY="3.5" orient="auto">
+        <polygon points="0 0, 8 3.5, 0 7" fill="#BA7517"/>
+      </marker>
+    </defs>
+
+    <!-- Edges group (behind nodes) -->
+    <g id="edges-layer"></g>
+
+    <!-- Particles layer -->
+    <g id="particles-layer"></g>
+
+    <!-- Nodes layer -->
+    <g id="nodes-layer"></g>
+  </svg>
+  <div id="tooltip"></div>
+</div>
+
+<div id="edge-info"><span id="ei-text">Survole une connexion pour lire son sens</span></div>
+<div id="legend"></div>
+
+<script>
+const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+const C = {
+  purple: { fill: dark?'#2d2870':'#EEEDFE', ring1: dark?'#4a44a0':'#c4c0f2', ring2: dark?'#3C3489':'#aeaaec', stroke: dark?'#AFA9EC':'#534AB7', text: dark?'#CECBF6':'#26215C', sub: dark?'#9993d8':'#6b64c0', p:'#7F77DD', marker:'arr-purple' },
+  teal:   { fill: dark?'#063d30':'#E1F5EE', ring1: dark?'#0d6650':'#88dcc0', ring2: dark?'#085041':'#55c8a0', stroke: dark?'#5DCAA5':'#0F6E56', text: dark?'#9FE1CB':'#04342C', sub: dark?'#3daa80':'#0a7a50', p:'#1D9E75', marker:'arr-teal'   },
+  coral:  { fill: dark?'#5a1e0a':'#FAECE7', ring1: dark?'#903015':'#f0ac98', ring2: dark?'#712B13':'#e68068', stroke: dark?'#F0997B':'#993C1D', text: dark?'#F5C4B3':'#4A1B0C', sub: dark?'#d06840':'#b04520', p:'#D85A30', marker:'arr-coral'  },
+  amber:  { fill: dark?'#4a2a04':'#FAEEDA', ring1: dark?'#855010':'#f3c468', ring2: dark?'#633806':'#e6a428', stroke: dark?'#EF9F27':'#854F0B', text: dark?'#FAC775':'#412402', sub: dark?'#c07818':'#8a5508', p:'#BA7517', marker:'arr-amber'  },
+};
+
+const nodes = [
+  { id:'devenir', lines:['Savoir','devenir'], sub:'Cap & direction',       x:350, y:95,  r:68, color:C.purple },
+  { id:'etre',    lines:['Savoir','être'],    sub:'Posture & régulation',  x:118, y:298, r:62, color:C.coral  },
+  { id:'savoir',  lines:['Savoir'],           sub:'Connaissances',         x:582, y:298, r:58, color:C.teal   },
+  { id:'faire',   lines:['Savoir','faire'],   sub:'Compétences pratiques', x:468, y:452, r:58, color:C.teal   },
+  { id:'vivre',   lines:['Savoir','vivre'],   sub:'Rythme & énergie',      x:198, y:452, r:58, color:C.amber  },
+];
+
+const edges = [
+  { id:'e1', from:'devenir', to:'etre',    label:'oriente la posture',     desc:'Le cap définit qui tu choisis d\'être au quotidien.',             curve:-44 },
+  { id:'e2', from:'devenir', to:'savoir',  label:'guide l\'apprentissage', desc:'Ta direction filtre ce que tu choisis d\'apprendre.',              curve: 44 },
+  { id:'e3', from:'etre',    to:'vivre',   label:'façonne le quotidien',   desc:'Qui tu es s\'exprime dans comment tu organises ta vie.',           curve:-32 },
+  { id:'e4', from:'etre',    to:'faire',   label:'donne sens à l\'action', desc:'Ta posture intérieure colore chaque compétence développée.',       curve:  0 },
+  { id:'e5', from:'savoir',  to:'faire',   label:'nourrit la pratique',    desc:'La théorie alimente et oriente l\'action concrète.',               curve: 32 },
+  { id:'e6', from:'faire',   to:'savoir',  label:'enrichit la théorie',    desc:'La pratique révèle de nouvelles questions et lacunes.',            curve:-32 },
+  { id:'e7', from:'vivre',   to:'etre',    label:'soutient la posture',    desc:'Ton rythme de vie conditionne ton état intérieur profond.',        curve: 32 },
+  { id:'e8', from:'faire',   to:'devenir', label:'révèle le cap',          desc:'L\'action montre concrètement ce qui t\'anime vraiment.',          curve:  0 },
+];
+
+function getNode(id) { return nodes.find(n => n.id === id); }
+
+function ns(tag, attrs={}) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  Object.entries(attrs).forEach(([k,v]) => el.setAttribute(k,v));
+  return el;
+}
+
+function curveCtrl(x1,y1,x2,y2,offset) {
+  const mx=(x1+x2)/2, my=(y1+y2)/2;
+  const dx=x2-x1, dy=y2-y1, len=Math.sqrt(dx*dx+dy*dy);
+  return { cx: mx-dy/len*offset, cy: my+dx/len*offset };
+}
+
+function borderPt(nx,ny,nr,tx,ty) {
+  const dx=tx-nx, dy=ty-ny, l=Math.sqrt(dx*dx+dy*dy);
+  return { x:nx+dx/l*nr, y:ny+dy/l*nr };
+}
+
+function edgePath(edge) {
+  const n1=getNode(edge.from), n2=getNode(edge.to);
+  const {cx,cy}=curveCtrl(n1.x,n1.y,n2.x,n2.y,edge.curve||0);
+  const s=borderPt(n1.x,n1.y,n1.r+2,cx,cy);
+  const e=borderPt(n2.x,n2.y,n2.r+9,cx,cy);
+  return { d:`M${s.x},${s.y} Q${cx},${cy} ${e.x},${e.y}`, cx, cy, sx:s.x, sy:s.y, ex:e.x, ey:e.y };
+}
+
+function labelPos(edge) {
+  const n1=getNode(edge.from), n2=getNode(edge.to);
+  const {cx,cy}=curveCtrl(n1.x,n1.y,n2.x,n2.y,edge.curve||0);
+  return {
+    x: (n1.x+n2.x)/2*0.5+cx*0.5,
+    y: (n1.y+n2.y)/2*0.5+cy*0.5,
+  };
+}
+
+/* ---- Build edges ---- */
+const edgesLayer = document.getElementById('edges-layer');
+const edgeEls = {};
+
+edges.forEach(edge => {
+  const n1=getNode(edge.from);
+  const {d}=edgePath(edge);
+  const lp=labelPos(edge);
+
+  const g = ns('g', { class:'edge-group', 'data-id':edge.id });
+
+  /* wide invisible hit area */
+  const hit = ns('path', { d, fill:'none', stroke:'transparent', 'stroke-width':'18' });
+
+  /* visible dashed line */
+  const path = ns('path', { d, class:'edge-path', stroke:n1.color.p, 'stroke-width':'1', 'marker-end':`url(#${n1.color.marker})` });
+
+  /* label pill */
+  const labelG = ns('g', {});
+  const pill = ns('rect', { class:'edge-label-bg', rx:'5', fill: dark?'#1a1a18':'#faf9f6', stroke:n1.color.p, 'stroke-width':'0.5' });
+  const labelT = ns('text', { class:'edge-label-text', fill:n1.color.p, 'text-anchor':'middle', 'dominant-baseline':'middle' });
+  labelT.textContent = edge.label;
+  labelG.appendChild(pill);
+  labelG.appendChild(labelT);
+
+  g.appendChild(hit);
+  g.appendChild(path);
+  g.appendChild(labelG);
+  edgesLayer.appendChild(g);
+
+  edgeEls[edge.id] = { g, path, pill, labelT, lp };
+
+  g.addEventListener('mouseenter', () => {
+    document.getElementById('ei-text').innerHTML = `<span class="ei-label">${edge.label}</span> — ${edge.desc}`;
+    document.getElementById('edge-info').classList.add('visible');
+  });
+  g.addEventListener('mouseleave', () => {
+    document.getElementById('edge-info').classList.remove('visible');
+  });
+});
+
+/* Size label pills after DOM is ready */
+requestAnimationFrame(() => {
+  edges.forEach(edge => {
+    const {pill, labelT, lp} = edgeEls[edge.id];
+    const bb = labelT.getBBox();
+    const pad=8, ph=6;
+    pill.setAttribute('x', lp.x - bb.width/2 - pad);
+    pill.setAttribute('y', lp.y - ph - 2);
+    pill.setAttribute('width', bb.width + pad*2);
+    pill.setAttribute('height', ph*2+4);
+    labelT.setAttribute('x', lp.x);
+    labelT.setAttribute('y', lp.y);
+  });
+});
+
+/* ---- Build nodes ---- */
+const nodesLayer = document.getElementById('nodes-layer');
+const tooltip    = document.getElementById('tooltip');
+
+nodes.forEach(node => {
+  const {x,y,r,color} = node;
+  const g = ns('g', { class:'node-group', 'data-id':node.id });
+
+  /* halo */
+  const halo = ns('circle', { cx:x, cy:y, r:r+12, fill:color.p, class:'halo', opacity:'0' });
+
+  /* ring outer */
+  const ro = ns('circle', { cx:x, cy:y, r, fill:color.ring2, class:'ring-outer' });
+
+  /* ring mid */
+  const rm = ns('circle', { cx:x, cy:y, r:r-7, fill:color.ring1, class:'ring-mid' });
+
+  /* core */
+  const core = ns('circle', { cx:x, cy:y, r:r-15, fill:color.fill });
+
+  /* outer stroke */
+  const so = ns('circle', { cx:x, cy:y, r, class:'ring-stroke', stroke:color.stroke });
+
+  /* inner stroke */
+  const si = ns('circle', { cx:x, cy:y, r:r-15, class:'ring-inner-stroke', stroke:color.stroke });
+
+  /* label */
+  const textG = ns('g', {});
+
+  if (node.lines.length === 2) {
+    const t1 = ns('text', { x, y:y-16, 'text-anchor':'middle', 'dominant-baseline':'middle', fill:color.sub, 'font-size':'11', 'font-weight':'400', opacity:'0.75' });
+    t1.textContent = node.lines[0];
+    const t2 = ns('text', { x, y:y-1, 'text-anchor':'middle', 'dominant-baseline':'middle', fill:color.text, 'font-size':'15', 'font-weight':'600' });
+    t2.textContent = node.lines[1];
+    textG.appendChild(t1);
+    textG.appendChild(t2);
+  } else {
+    const t1 = ns('text', { x, y:y-7, 'text-anchor':'middle', 'dominant-baseline':'middle', fill:color.text, 'font-size':'15', 'font-weight':'600' });
+    t1.textContent = node.lines[0];
+    textG.appendChild(t1);
+  }
+
+  const sub = ns('text', { x, y:y+15, 'text-anchor':'middle', 'dominant-baseline':'middle', fill:color.sub, 'font-size':'10.5', 'font-weight':'400', opacity:'0.7' });
+  sub.textContent = node.sub;
+  textG.appendChild(sub);
+
+  [halo, ro, rm, core, so, si, textG].forEach(el => g.appendChild(el));
+  nodesLayer.appendChild(g);
+
+  /* tooltip on hover */
+  g.addEventListener('mouseenter', (e) => {
+    const rel = edges.filter(ed => ed.from===node.id || ed.to===node.id);
+    const lines = rel.map(ed => {
+      const out = ed.from===node.id;
+      const other = getNode(out?ed.to:ed.from);
+      return `<div class="edge-line"><span class="arrow-tag">${out?'→':'←'}</span><span>${other.lines.join('-')} : ${ed.label}</span></div>`;
+    }).join('');
+    tooltip.innerHTML = `<strong>${node.lines.join('-')}</strong>${lines}`;
+
+    /* highlight connected edges */
+    rel.forEach(ed => {
+      const el = edgeEls[ed.id];
+      el.path.style.opacity = '0.82';
+      el.path.style.strokeWidth = '1.6';
+    });
+
+    const wrap = document.getElementById('flux-wrap');
+    const rect  = wrap.getBoundingClientRect();
+    const svgEl = document.getElementById('flux-svg');
+    const svgR  = svgEl.getBoundingClientRect();
+    const scaleX = svgR.width / 700;
+    const scaleY = svgR.height / 540;
+    const tx = node.x * scaleX + 18;
+    const ty = node.y * scaleY - 30;
+    tooltip.style.left = Math.min(tx, svgR.width - 250) + 'px';
+    tooltip.style.top  = Math.max(ty, 4) + 'px';
+    tooltip.style.display = 'block';
+  });
+
+  g.addEventListener('mouseleave', () => {
+    tooltip.style.display = 'none';
+    edges.forEach(ed => {
+      const el = edgeEls[ed.id];
+      el.path.style.opacity = '';
+      el.path.style.strokeWidth = '';
+    });
+  });
+});
+
+/* ---- Particles (SVG circles, animated via JS) ---- */
+const particlesLayer = document.getElementById('particles-layer');
+const particles = [];
+const MAX_P = 55;
+
+function bezier(t,x1,y1,cx,cy,x2,y2) {
+  return {
+    x:(1-t)*(1-t)*x1+2*(1-t)*t*cx+t*t*x2,
+    y:(1-t)*(1-t)*y1+2*(1-t)*t*cy+t*t*y2,
+  };
+}
+
+function spawnParticle() {
+  const edge = edges[Math.floor(Math.random()*edges.length)];
+  const n1=getNode(edge.from), n2=getNode(edge.to);
+  const {cx,cy}=curveCtrl(n1.x,n1.y,n2.x,n2.y,edge.curve||0);
+  const dx=n2.x-n1.x, dy=n2.y-n1.y, len=Math.sqrt(dx*dx+dy*dy);
+  const r = 1.5+Math.random()*2;
+  const el = ns('circle', { r, fill:n1.color.p, class:'particle' });
+  particlesLayer.appendChild(el);
+  particles.push({
+    edge, el, n1, n2, cx, cy, len,
+    t: n1.r/len + 0.02,
+    speed: 0.002+Math.random()*0.003,
+    baseAlpha: 0.35+Math.random()*0.45,
+  });
+}
+
+let last=0;
+function animate(ts) {
+  if (ts-last > 16) {
+    last=ts;
+    particles.forEach(p => {
+      const {n1,n2,cx,cy} = p;
+      const stopT = (p.len-n2.r-10)/p.len;
+      const pos = bezier(p.t, n1.x,n1.y, cx,cy, n2.x,n2.y);
+      p.el.setAttribute('cx', pos.x);
+      p.el.setAttribute('cy', pos.y);
+      p.el.setAttribute('opacity', p.baseAlpha);
+      p.t += p.speed;
+      if (p.t > stopT) p.t = n1.r/p.len + 0.02;
+    });
+    if (particles.length < MAX_P && Math.random()<0.18) spawnParticle();
+  }
+  requestAnimationFrame(animate);
+}
+
+for (let i=0;i<30;i++) spawnParticle();
+requestAnimationFrame(animate);
+
+/* ---- Legend ---- */
+const legData=[
+  {label:'Savoir-devenir',        c:C.purple.p},
+  {label:'Savoir-être',           c:C.coral.p },
+  {label:'Savoir / Savoir-faire', c:C.teal.p  },
+  {label:'Savoir-vivre',          c:C.amber.p },
+];
+const legendEl=document.getElementById('legend');
+legData.forEach(l=>{
+  legendEl.innerHTML+=`<div class="leg-item"><span class="leg-dot" style="background:${l.c}"></span>${l.label}</div>`;
+});
+</script>
+</body>
+</html>
